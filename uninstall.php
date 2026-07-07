@@ -18,6 +18,7 @@ delete_option('llmstxtgen_custom_text');
 delete_option('llmstxtgen_encoding');
 delete_option('llmstxtgen_post_type_settings');
 delete_option('llmstxtgen_page_settings');
+delete_option('llmstxtgen_excerpt_length');
 
 // 生成されたLLMS.txtファイルを削除
 $llmstxtgen_file_path = ABSPATH . 'llms.txt';

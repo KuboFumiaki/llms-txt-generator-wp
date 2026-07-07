@@ -27,6 +27,10 @@ function llmstxtgen_activate() {
         add_option('llmstxtgen_encoding', 'UTF-8');
     }
 
+    if (!get_option('llmstxtgen_excerpt_length')) {
+        add_option('llmstxtgen_excerpt_length', 15);
+    }
+
     if (!get_option('llmstxtgen_custom_text')) {
         $default_text = "# " . get_bloginfo('name') . "\n\n" . get_bloginfo('description') . "\n\n";
         add_option('llmstxtgen_custom_text', $default_text);
@@ -70,6 +74,31 @@ function llmstxtgen_deactivate() {
     wp_clear_scheduled_hook('llmstxtgen_cron');
 }
 register_deactivation_hook(__FILE__, 'llmstxtgen_deactivate');
+
+// 記事の要約を取得する（手動抜粋 → SEOプラグインのメタディスクリプション → 本文冒頭 の順で採用）
+function llmstxtgen_get_excerpt($post) {
+    $length = (int) get_option('llmstxtgen_excerpt_length', 15);
+    if ($length < 1) {
+        $length = 15;
+    }
+
+    // 1. 手動抜粋
+    if (!empty($post->post_excerpt)) {
+        return wp_trim_words($post->post_excerpt, $length, '...');
+    }
+
+    // 2. SEOプラグインのメタディスクリプション（Yoast SEO / Rank Math）
+    $meta_description = get_post_meta($post->ID, '_yoast_wpseo_metadesc', true);
+    if (empty($meta_description)) {
+        $meta_description = get_post_meta($post->ID, 'rank_math_description', true);
+    }
+    if (!empty($meta_description)) {
+        return wp_trim_words($meta_description, $length, '...');
+    }
+
+    // 3. 本文の冒頭
+    return wp_trim_words($post->post_content, $length, '...');
+}
 
 // LLMS.txtを生成してサイトルートに保存する
 function llmstxtgen_generate() {
@@ -214,7 +243,7 @@ function llmstxtgen_generate() {
         // 親ページとその子ページを出力（親ページの順番に紐づけて、子ページは公開日順）
         foreach ($ordered_parent_pages as $parent_page) {
             $page_url = get_permalink($parent_page->ID);
-            $excerpt = wp_trim_words($parent_page->post_content, 15, '...');
+            $excerpt = llmstxtgen_get_excerpt($parent_page);
             $content .= "- [{$parent_page->post_title}]({$page_url}):{$excerpt}\n";
 
             // この親ページの子ページがあれば公開日順で出力
@@ -229,7 +258,7 @@ function llmstxtgen_generate() {
                 // 子ページを出力
                 foreach ($child_pages as $child_page) {
                     $child_url = get_permalink($child_page->ID);
-                    $child_excerpt = wp_trim_words($child_page->post_content, 15, '...');
+                    $child_excerpt = llmstxtgen_get_excerpt($child_page);
                     $content .= "  - [{$child_page->post_title}]({$child_url}):{$child_excerpt}\n";
                 }
             }
@@ -238,7 +267,7 @@ function llmstxtgen_generate() {
         // 親ページが選択されていない独立した子ページを出力
         foreach ($orphan_child_pages as $orphan_page) {
             $page_url = get_permalink($orphan_page->ID);
-            $excerpt = wp_trim_words($orphan_page->post_content, 15, '...');
+            $excerpt = llmstxtgen_get_excerpt($orphan_page);
             $content .= "- [{$orphan_page->post_title}]({$page_url}):{$excerpt}\n";
         }
 
@@ -287,7 +316,7 @@ function llmstxtgen_generate() {
                 $content .= "### {$category_name}\n";
                 foreach ($category_posts as $post) {
                     $post_url = get_permalink($post->ID);
-                    $excerpt = wp_trim_words($post->post_content, 15, '...');
+                    $excerpt = llmstxtgen_get_excerpt($post);
                     $content .= "- [{$post->post_title}]({$post_url}):{$excerpt}\n";
                 }
                 $content .= "\n";
@@ -298,7 +327,7 @@ function llmstxtgen_generate() {
                 $content .= "### " . __('未分類', 'llms-txt-generator-wp') . "\n";
                 foreach ($uncategorized_posts as $post) {
                     $post_url = get_permalink($post->ID);
-                    $excerpt = wp_trim_words($post->post_content, 15, '...');
+                    $excerpt = llmstxtgen_get_excerpt($post);
                     $content .= "- [{$post->post_title}]({$post_url}):{$excerpt}\n";
                 }
                 $content .= "\n";
@@ -307,7 +336,7 @@ function llmstxtgen_generate() {
             // その他の投稿タイプはそのまま出力
             foreach ($posts as $post) {
                 $post_url = get_permalink($post->ID);
-                $excerpt = wp_trim_words($post->post_content, 15, '...');
+                $excerpt = llmstxtgen_get_excerpt($post);
                 $content .= "- [{$post->post_title}]({$post_url}):{$excerpt}\n";
             }
             $content .= "\n";
@@ -411,7 +440,7 @@ function llmstxtgen_enqueue_admin_assets($hook_suffix) {
     wp_enqueue_script(
         'llmstxtgen-admin',
         plugins_url('js/admin.js', __FILE__),
-        array('jquery'),
+        array('jquery', 'jquery-ui-sortable'),
         LLMSTXTGEN_VERSION,
         true
     );
@@ -429,7 +458,7 @@ function llmstxtgen_display_page_tree($pages, $enabled_pages, $parent_id = 0, $l
 
     foreach ($child_pages as $page) {
         echo '<label style="display: block; margin-bottom: 5px; margin-left: ' . esc_attr($level * 24) . 'px;">';
-        echo '<input type="checkbox" name="enabled_pages[]" value="' . esc_attr($page->ID) . '"' . checked(in_array($page->ID, $enabled_pages), true, false) . '>';
+        echo '<input type="checkbox" name="enabled_pages[]" value="' . esc_attr($page->ID) . '" data-parent="' . esc_attr($page->post_parent) . '" data-title="' . esc_attr($page->post_title) . '"' . checked(in_array($page->ID, $enabled_pages), true, false) . '>';
         echo ' ' . esc_html($page->post_title);
         if ($level == 0) {
             echo ' <span style="color: #999; font-size: 12px;">(' . esc_html__('親ページ', 'llms-txt-generator-wp') . ')</span>';
@@ -453,24 +482,24 @@ function llmstxtgen_admin_page() {
     $file_path = ABSPATH . 'llms.txt';
     $file_url = get_site_url() . '/llms.txt';
 
-    // カスタムテキストの保存処理
-    if (isset($_POST['save_custom_text']) && check_admin_referer('llmstxtgen_custom_text_action', 'llmstxtgen_custom_text_nonce')) {
-        if (isset($_POST['llmstxtgen_custom_text'])) {
-            $custom_text = sanitize_textarea_field(wp_unslash($_POST['llmstxtgen_custom_text']));
-            update_option('llmstxtgen_custom_text', $custom_text);
-            echo '<div class="notice notice-success"><p>' . esc_html__('カスタムテキストが保存されました！', 'llms-txt-generator-wp') . '</p></div>';
-        }
-    }
+    // 設定の一括保存と再生成
+    if (isset($_POST['llmstxtgen_save_settings']) && check_admin_referer('llmstxtgen_settings_action', 'llmstxtgen_settings_nonce')) {
+        // カスタムテキスト
+        $custom_text = isset($_POST['llmstxtgen_custom_text']) ? sanitize_textarea_field(wp_unslash($_POST['llmstxtgen_custom_text'])) : '';
+        update_option('llmstxtgen_custom_text', $custom_text);
 
-    // 文字コード設定の保存処理
-    if (isset($_POST['save_encoding']) && check_admin_referer('llmstxtgen_encoding_action', 'llmstxtgen_encoding_nonce')) {
+        // 文字コード
         $encoding = (isset($_POST['llmstxtgen_encoding']) && sanitize_text_field(wp_unslash($_POST['llmstxtgen_encoding'])) === 'SJIS') ? 'SJIS' : 'UTF-8';
         update_option('llmstxtgen_encoding', $encoding);
-        echo '<div class="notice notice-success"><p>' . esc_html__('文字コード設定が保存されました！', 'llms-txt-generator-wp') . '</p></div>';
-    }
 
-    // 投稿タイプ設定の保存処理
-    if (isset($_POST['save_post_types']) && check_admin_referer('llmstxtgen_post_types_action', 'llmstxtgen_post_types_nonce')) {
+        // 要約の長さ
+        $excerpt_length = isset($_POST['llmstxtgen_excerpt_length']) ? absint($_POST['llmstxtgen_excerpt_length']) : 15;
+        if ($excerpt_length < 1 || $excerpt_length > 200) {
+            $excerpt_length = 15;
+        }
+        update_option('llmstxtgen_excerpt_length', $excerpt_length);
+
+        // 投稿タイプ設定
         $enabled_post_types = isset($_POST['enabled_post_types']) ? array_map('sanitize_text_field', wp_unslash($_POST['enabled_post_types'])) : array();
         $post_type_order_raw = isset($_POST['post_type_order']) ? sanitize_text_field(wp_unslash($_POST['post_type_order'])) : '';
 
@@ -485,11 +514,8 @@ function llmstxtgen_admin_page() {
             'enabled' => $enabled_post_types,
             'order' => $post_type_order
         ));
-        echo '<div class="notice notice-success"><p>' . esc_html__('投稿タイプ設定が保存されました！', 'llms-txt-generator-wp') . '</p></div>';
-    }
 
-    // 固定ページ設定の保存処理
-    if (isset($_POST['save_page_settings']) && check_admin_referer('llmstxtgen_page_settings_action', 'llmstxtgen_page_settings_nonce')) {
+        // 固定ページ設定
         $enabled_pages = isset($_POST['enabled_pages']) ? array_map('intval', wp_unslash($_POST['enabled_pages'])) : array();
         $page_order_raw = isset($_POST['page_order']) ? sanitize_text_field(wp_unslash($_POST['page_order'])) : '';
 
@@ -504,7 +530,13 @@ function llmstxtgen_admin_page() {
             'enabled_pages' => $enabled_pages,
             'order' => $page_order
         ));
-        echo '<div class="notice notice-success"><p>' . esc_html__('固定ページ設定が保存されました！', 'llms-txt-generator-wp') . '</p></div>';
+
+        // 保存した設定でLLMS.txtを再生成
+        if (llmstxtgen_generate()) {
+            echo '<div class="notice notice-success"><p>' . esc_html__('設定を保存し、LLMS.txtを再生成しました！', 'llms-txt-generator-wp') . '</p></div>';
+        } else {
+            echo '<div class="notice notice-error"><p>' . esc_html__('設定は保存されましたが、LLMS.txtの生成に失敗しました。サイトルートへの書き込み権限を確認してください。', 'llms-txt-generator-wp') . '</p></div>';
+        }
     }
 
     // 手動生成処理
@@ -518,6 +550,7 @@ function llmstxtgen_admin_page() {
 
     $current_custom_text = get_option('llmstxtgen_custom_text', '');
     $current_encoding = get_option('llmstxtgen_encoding', 'UTF-8');
+    $current_excerpt_length = (int) get_option('llmstxtgen_excerpt_length', 15);
     $post_type_settings = get_option('llmstxtgen_post_type_settings', array());
     $enabled_post_types = isset($post_type_settings['enabled']) ? $post_type_settings['enabled'] : array();
     $post_type_order = isset($post_type_settings['order']) ? $post_type_settings['order'] : array();
@@ -551,8 +584,8 @@ function llmstxtgen_admin_page() {
     // カスタムテキスト設定フォーム
     echo '<h2>' . esc_html__('カスタムテキスト設定', 'llms-txt-generator-wp') . '</h2>';
     echo '<p>' . esc_html__('LLMS.txtファイルの上部に表示するテキストを設定できます。', 'llms-txt-generator-wp') . '</p>';
-    echo '<form method="post" style="margin-bottom: 30px;">';
-    wp_nonce_field('llmstxtgen_custom_text_action', 'llmstxtgen_custom_text_nonce');
+    echo '<form method="post">';
+    wp_nonce_field('llmstxtgen_settings_action', 'llmstxtgen_settings_nonce');
     echo '<table class="form-table">';
     echo '<tr>';
     echo '<th scope="row">' . esc_html__('カスタムテキスト', 'llms-txt-generator-wp') . '</th>';
@@ -562,18 +595,12 @@ function llmstxtgen_admin_page() {
     echo '</td>';
     echo '</tr>';
     echo '</table>';
-    echo '<p class="submit">';
-    echo '<input type="submit" name="save_custom_text" class="button button-primary" value="' . esc_attr__('カスタムテキストを保存', 'llms-txt-generator-wp') . '">';
-    echo '</p>';
-    echo '</form>';
 
     echo '<hr>';
 
     // 文字コード設定フォーム
     echo '<h2>' . esc_html__('文字コード設定', 'llms-txt-generator-wp') . '</h2>';
     echo '<p>' . esc_html__('LLMS.txtファイルの文字コードを選択してください。', 'llms-txt-generator-wp') . '</p>';
-    echo '<form method="post" style="margin-bottom: 30px;">';
-    wp_nonce_field('llmstxtgen_encoding_action', 'llmstxtgen_encoding_nonce');
     echo '<table class="form-table">';
     echo '<tr>';
     echo '<th scope="row">' . esc_html__('ファイル文字コード', 'llms-txt-generator-wp') . '</th>';
@@ -590,18 +617,27 @@ function llmstxtgen_admin_page() {
     echo '</td>';
     echo '</tr>';
     echo '</table>';
-    echo '<p class="submit">';
-    echo '<input type="submit" name="save_encoding" class="button button-primary" value="' . esc_attr__('文字コード設定を保存', 'llms-txt-generator-wp') . '">';
-    echo '</p>';
-    echo '</form>';
+
+    echo '<hr>';
+
+    // 要約設定
+    echo '<h2>' . esc_html__('要約設定', 'llms-txt-generator-wp') . '</h2>';
+    echo '<p>' . esc_html__('各記事の要約は「手動抜粋 → SEOプラグインのメタディスクリプション（Yoast SEO / Rank Math）→ 本文の冒頭」の優先順で自動採用されます。', 'llms-txt-generator-wp') . '</p>';
+    echo '<table class="form-table">';
+    echo '<tr>';
+    echo '<th scope="row">' . esc_html__('要約の長さ', 'llms-txt-generator-wp') . '</th>';
+    echo '<td>';
+    echo '<input type="number" name="llmstxtgen_excerpt_length" value="' . esc_attr($current_excerpt_length) . '" min="1" max="200" class="small-text"> ' . esc_html__('ワード', 'llms-txt-generator-wp');
+    echo '<p class="description">' . esc_html__('日本語サイトでは文字数として扱われます。デフォルトは15です。', 'llms-txt-generator-wp') . '</p>';
+    echo '</td>';
+    echo '</tr>';
+    echo '</table>';
 
     echo '<hr>';
 
     // 投稿タイプ設定フォーム
     echo '<h2>' . esc_html__('投稿タイプ設定', 'llms-txt-generator-wp') . '</h2>';
     echo '<p>' . esc_html__('LLMS.txtに出力する投稿タイプと順番を設定してください。', 'llms-txt-generator-wp') . '</p>';
-    echo '<form method="post" style="margin-bottom: 30px;">';
-    wp_nonce_field('llmstxtgen_post_types_action', 'llmstxtgen_post_types_nonce');
     echo '<table class="form-table">';
     echo '<tr>';
     echo '<th scope="row">' . esc_html__('出力する投稿タイプ', 'llms-txt-generator-wp') . '</th>';
@@ -620,7 +656,7 @@ function llmstxtgen_admin_page() {
 
         echo '<div>';
         echo '<p><strong>' . esc_html__('出力順序：', 'llms-txt-generator-wp') . '</strong></p>';
-        echo '<p class="description">' . esc_html__('上下の矢印ボタンをクリックして順番を変更してください。', 'llms-txt-generator-wp') . '</p>';
+        echo '<p class="description">' . esc_html__('ドラッグ＆ドロップまたは上下の矢印ボタンで順番を変更できます。チェックを外した投稿タイプは薄く表示されます。', 'llms-txt-generator-wp') . '</p>';
         echo '<div id="post-type-order-list" style="border: 1px solid #ddd; padding: 15px; background: #f9f9f9; min-height: 120px;">';
 
         // 全ての投稿タイプをリストアップ（順序設定に基づいて）
@@ -672,18 +708,12 @@ function llmstxtgen_admin_page() {
     echo '</td>';
     echo '</tr>';
     echo '</table>';
-    echo '<p class="submit">';
-    echo '<input type="submit" name="save_post_types" class="button button-primary" value="' . esc_attr__('投稿タイプ設定を保存', 'llms-txt-generator-wp') . '">';
-    echo '</p>';
-    echo '</form>';
 
     echo '<hr>';
 
     // 固定ページ出力設定フォーム
     echo '<h2>' . esc_html__('固定ページ出力設定', 'llms-txt-generator-wp') . '</h2>';
     echo '<p>' . esc_html__('LLMS.txtに出力する固定ページと順番を設定してください。', 'llms-txt-generator-wp') . '</p>';
-    echo '<form method="post" style="margin-bottom: 30px;">';
-    wp_nonce_field('llmstxtgen_page_settings_action', 'llmstxtgen_page_settings_nonce');
     echo '<table class="form-table">';
     echo '<tr>';
     echo '<th scope="row">' . esc_html__('出力する固定ページ', 'llms-txt-generator-wp') . '</th>';
@@ -704,7 +734,7 @@ function llmstxtgen_admin_page() {
 
         echo '<div>';
         echo '<p><strong>' . esc_html__('出力順序：', 'llms-txt-generator-wp') . '</strong></p>';
-        echo '<p class="description">' . esc_html__('上下の矢印ボタンをクリックして順番を変更してください。選択した固定ページのみが表示されます。', 'llms-txt-generator-wp') . '</p>';
+        echo '<p class="description">' . esc_html__('ドラッグ＆ドロップまたは上下の矢印ボタンで順番を変更できます。チェックした親ページが自動的にこのリストに表示されます。', 'llms-txt-generator-wp') . '</p>';
         echo '<div id="page-order-list" style="border: 1px solid #ddd; padding: 15px; background: #f9f9f9; min-height: 120px;">';
 
         // 有効な親ページのみの順序設定（子ページは表示しない）
@@ -776,7 +806,7 @@ function llmstxtgen_admin_page() {
     echo '</tr>';
     echo '</table>';
     echo '<p class="submit">';
-    echo '<input type="submit" name="save_page_settings" class="button button-primary" value="' . esc_attr__('固定ページ設定を保存', 'llms-txt-generator-wp') . '">';
+    echo '<input type="submit" name="llmstxtgen_save_settings" class="button button-primary" value="' . esc_attr__('設定を保存して再生成', 'llms-txt-generator-wp') . '">';
     echo '</p>';
     echo '</form>';
 
@@ -838,13 +868,32 @@ function llmstxtgen_admin_page() {
         echo '<p><strong>' . esc_html__('現在のファイル状況:', 'llms-txt-generator-wp') . '</strong><br>';
         echo esc_html__('最終更新:', 'llms-txt-generator-wp') . ' ' . esc_html($last_modified) . '<br>';
         echo esc_html__('ファイルサイズ:', 'llms-txt-generator-wp') . ' ' . esc_html(size_format(filesize($file_path))) . '</p>';
+
+        // 生成済みファイルのプレビュー（SJIS保存時はUTF-8に戻して表示）
+        global $wp_filesystem;
+        if (!function_exists('WP_Filesystem')) {
+            require_once ABSPATH . 'wp-admin/includes/file.php';
+        }
+        if (WP_Filesystem()) {
+            $preview = $wp_filesystem->get_contents($file_path);
+            if ($preview !== false) {
+                if ($current_encoding === 'SJIS') {
+                    $preview = mb_convert_encoding($preview, 'UTF-8', 'SJIS');
+                }
+                echo '<details style="margin-bottom: 20px;">';
+                echo '<summary style="cursor: pointer; font-weight: 600;">' . esc_html__('現在のLLMS.txtをプレビュー', 'llms-txt-generator-wp') . '</summary>';
+                echo '<pre style="max-height: 400px; overflow: auto; background: #fff; border: 1px solid #ddd; padding: 15px; white-space: pre-wrap; word-break: break-all;">' . esc_html($preview) . '</pre>';
+                echo '</details>';
+            }
+        }
     } else {
         echo '<p><strong>' . esc_html__('現在のファイル状況:', 'llms-txt-generator-wp') . '</strong> ' . esc_html__('ファイルはまだ生成されていません', 'llms-txt-generator-wp') . '</p>';
     }
 
     echo '<form method="post">';
     wp_nonce_field('llmstxtgen_generate_action', 'llmstxtgen_generate_nonce');
-    echo '<input type="submit" name="generate_llms" class="button button-primary" value="' . esc_attr__('LLMS.txtを生成', 'llms-txt-generator-wp') . '">';
+    echo '<p class="description">' . esc_html__('設定を変更せずに、現在の設定でファイルだけを再生成します。', 'llms-txt-generator-wp') . '</p>';
+    echo '<input type="submit" name="generate_llms" class="button" value="' . esc_attr__('LLMS.txtを再生成', 'llms-txt-generator-wp') . '">';
     echo '</form>';
     echo '</div>';
 }
