@@ -2,9 +2,9 @@
 Contributors: KuboFumiaki
 Tags: llm, ai, machine learning, content export, markdown
 Requires at least: 5.0
-Tested up to: 6.8
+Tested up to: 7.0
 Stable tag: 1.0.0
-Requires PHP: 7.3
+Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -45,7 +45,7 @@ LLMs.txt Generator for WPは、WordPressサイトのコンテンツをAIや機�
 = システム要件 =
 
 * WordPress 5.0以上
-* PHP 7.3以上
+* PHP 7.4以上
 * mbstring拡張（文字コード変換用）
 
 == Installation ==
@@ -87,7 +87,7 @@ LLMs.txt Generator for WPは、WordPressサイトのコンテンツをAIや機�
 
 = 文字コードは変更できますか？ =
 
-はい、UTF-8またはShift-JISから選択できます。デフォルトはShift-JISです。
+はい、UTF-8またはShift-JISから選択できます。デフォルトはUTF-8です。
 
 = 大量の投稿がある場合の影響は？ =
 
