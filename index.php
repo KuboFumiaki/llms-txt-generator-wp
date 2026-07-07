@@ -252,6 +252,16 @@ function llmstxtgen_generate() {
 
         $content .= "## {$post_type_name}\n";
 
+        // 一覧（アーカイブ）ページがあれば見出しの直下に出力
+        if ($post_type !== 'post') {
+            $archive_link = get_post_type_archive_link($post_type);
+            if ($archive_link) {
+                /* translators: %s: 投稿タイプ名 */
+                $archive_label = sprintf(__('%s一覧', 'llms-txt-generator-wp'), $post_type_name);
+                $content .= "- [{$archive_label}]({$archive_link})\n";
+            }
+        }
+
         // 通常の投稿（post）の場合はカテゴリ別に分類
         if ($post_type === 'post') {
             $posts_by_category = array();
